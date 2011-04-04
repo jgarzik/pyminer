@@ -134,9 +134,8 @@ class Miner:
 			hashes_done += 1
 
 			# quick test for winning solution: high 32 bits zero?
-			H = struct.unpack('<I', hash[28:32])
-			if H:
-				continue
+			if hash[-4:] != '\0\0\0\0':
+     				continue
 
 			# convert binary hash to 256-bit Python long
 			hash = bufreverse(hash)
