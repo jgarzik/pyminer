@@ -124,11 +124,8 @@ class Miner:
 			hash1 = hashlib.sha256(blk_hdr + nonce_bin).digest()
 
 			# sha256 hash of sha256 hash
-			hash_o = hashlib.sha256()
-			hash_o.update(hash1)
+			hash_o = hashlib.sha256(hash1)
 			hash = hash_o.digest()
-
-			hashes_done += 1
 
 			# quick test for winning solution: high 32 bits zero?
 			if hash[-4:] != '\0\0\0\0':
@@ -149,7 +146,7 @@ class Miner:
 			else:
 				print time.asctime(), "PROOF-OF-WORK false positive %064x" % (l,)
 
-		return (hashes_done, None)
+		return (nonce+1, None)
 
 	def iterate(self, rpc):
 		work = rpc.getwork()
