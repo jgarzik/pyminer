@@ -121,10 +121,7 @@ class Miner:
 			nonce_bin = struct.pack("<I", nonce)
 
 			# hash final 4b, the nonce value
-			hash1_o = hashlib.sha256()
-			hash1_o.update(blk_hdr)
-			hash1_o.update(nonce_bin)
-			hash1 = hash1_o.digest()
+			hash1 = hashlib.sha256(blk_hdr + nonce_bin).digest()
 
 			# sha256 hash of sha256 hash
 			hash_o = hashlib.sha256()
@@ -147,8 +144,8 @@ class Miner:
 			# proof-of-work test:  hash < target
 			if l < target:
 				print time.asctime(), "PROOF-OF-WORK found: %064x" % (l,)
-				return (hashes_done, 
-					static_data[:76] + nonce_bin)
+				return (nonce+1, 
+ 					static_data[:76] + nonce_bin)
 			else:
 				print time.asctime(), "PROOF-OF-WORK false positive %064x" % (l,)
 
