@@ -28,7 +28,7 @@ import sys
 from multiprocessing import Process
 
 ERR_SLEEP = 15
-MAX_NONCE = 1000000
+MAX_NONCE = 1000000L
 
 settings = {}
 pp = pprint.PrettyPrinter(indent=4)
@@ -99,10 +99,11 @@ def wordreverse(in_buf):
 class Miner:
 	def __init__(self, id):
 		self.id = id
+		self.max_nonce = MAX_NONCE
 
 	def work(self, datastr, targetstr):
-		# decode 80b block from hex string to binary
-		static_data = datastr.decode('hex')[:80]
+		# decode work data hex string to binary
+		static_data = datastr.decode('hex')
 		static_data = bufreverse(static_data)
 
 		# the first 76b of 80b do not change
@@ -114,15 +115,18 @@ class Miner:
 		targetbin_str = targetbin.encode('hex')
 		target = long(targetbin_str, 16)
 
+		# pre-hash first 76b of block header
+		static_hash = hashlib.sha256()
+		static_hash.update(blk_hdr)
+
 		hashes_done = 1
-		for nonce in xrange(MAX_NONCE):
+		for nonce in xrange(self.max_nonce):
 
 			# encode 32-bit nonce value
 			nonce_bin = struct.pack("<I", nonce)
 
 			# hash final 4b, the nonce value
-			hash1_o = hashlib.sha256()
-			hash1_o.update(blk_hdr)
+			hash1_o = static_hash.copy()
 			hash1_o.update(nonce_bin)
 			hash1 = hash1_o.digest()
 
@@ -134,8 +138,7 @@ class Miner:
 			hashes_done += 1
 
 			# quick test for winning solution: high 32 bits zero?
-			H = struct.unpack('<I', hash[28:32])
-			if H:
+			if hash[-4:] != '\0\0\0\0':
 				continue
 
 			# convert binary hash to 256-bit Python long
@@ -148,12 +151,20 @@ class Miner:
 			# proof-of-work test:  hash < target
 			if l < target:
 				print time.asctime(), "PROOF-OF-WORK found: %064x" % (l,)
-				return (hashes_done, 
-					static_data[:76] + nonce_bin)
+				return (hashes_done, nonce_bin)
 			else:
 				print time.asctime(), "PROOF-OF-WORK false positive %064x" % (l,)
+#				return (hashes_done, nonce_bin)
 
 		return (hashes_done, None)
+
+	def submit_work(self, rpc, original_data, nonce_bin):
+		nonce_bin = bufreverse(nonce_bin)
+		nonce = nonce_bin.encode('hex')
+		solution = original_data[:152] + nonce + original_data[160:256]
+		param_arr = [ solution ]
+		result = rpc.getwork(param_arr)
+		print time.asctime(), "--> Upstream RPC result:", result
 
 	def iterate(self, rpc):
 		work = rpc.getwork()
@@ -166,20 +177,24 @@ class Miner:
 
 		time_start = time.time()
 
-		(hashes_done, solution_data) = self.work(work['data'],
-							 work['target'])
+		(hashes_done, nonce_bin) = self.work(work['data'],
+						     work['target'])
 
 		time_end = time.time()
 		time_diff = time_end - time_start
+
+		self.max_nonce = long(
+			(hashes_done * settings['scantime']) / time_diff)
+		if self.max_nonce > 0xfffffffaL:
+			self.max_nonce = 0xfffffffaL
 
 		if settings['hashmeter']:
 			print "HashMeter(%d): %d hashes, %.2f Khash/sec" % (
 			      self.id, hashes_done,
 			      (hashes_done / 1000.0) / time_diff)
 
-		if solution_data is not None:
-			param_arr = [ solution_data ]
-			rpc.getwork(param_err)
+		if nonce_bin is not None:
+			self.submit_work(rpc, work['data'], nonce_bin)
 
 	def loop(self):
 		rpc = BitcoinRPC(settings['host'], settings['port'],
@@ -223,6 +238,8 @@ if __name__ == '__main__':
 		settings['threads'] = 1
 	if 'hashmeter' not in settings:
 		settings['hashmeter'] = 0
+	if 'scantime' not in settings:
+		settings['scantime'] = 30L
 	if 'rpcuser' not in settings or 'rpcpass' not in settings:
 		print "Missing username and/or password in cfg file"
 		sys.exit(1)
@@ -230,6 +247,7 @@ if __name__ == '__main__':
 	settings['port'] = int(settings['port'])
 	settings['threads'] = int(settings['threads'])
 	settings['hashmeter'] = int(settings['hashmeter'])
+	settings['scantime'] = long(settings['scantime'])
 
 	thr_list = []
 	for thr_id in range(settings['threads']):
