@@ -119,7 +119,6 @@ class Miner:
 		static_hash = hashlib.sha256()
 		static_hash.update(blk_hdr)
 
-		hashes_done = 1
 		for nonce in xrange(self.max_nonce):
 
 			# encode 32-bit nonce value
@@ -135,8 +134,6 @@ class Miner:
 			hash_o.update(hash1)
 			hash = hash_o.digest()
 
-			hashes_done += 1
-
 			# quick test for winning solution: high 32 bits zero?
 			if hash[-4:] != '\0\0\0\0':
 				continue
@@ -151,12 +148,12 @@ class Miner:
 			# proof-of-work test:  hash < target
 			if l < target:
 				print time.asctime(), "PROOF-OF-WORK found: %064x" % (l,)
-				return (hashes_done, nonce_bin)
+				return (nonce + 1, nonce_bin)
 			else:
 				print time.asctime(), "PROOF-OF-WORK false positive %064x" % (l,)
-#				return (hashes_done, nonce_bin)
+#				return (nonce + 1, nonce_bin)
 
-		return (hashes_done, None)
+		return (nonce + 1, None)
 
 	def submit_work(self, rpc, original_data, nonce_bin):
 		nonce_bin = bufreverse(nonce_bin)
