@@ -17,7 +17,7 @@
 #
 
 import time
-import json
+import simplejson as json
 import pprint
 import hashlib
 import struct
@@ -39,7 +39,7 @@ class BitcoinRPC:
 	def __init__(self, host, port, username, password):
 		authpair = "%s:%s" % (username, password)
 		self.authhdr = "Basic %s" % (base64.b64encode(authpair))
-		self.conn = httplib.HTTPConnection(host, port, False, 30)
+		self.conn = httplib.HTTPConnection(host, port, False)
 	def rpc(self, method, params=None):
 		self.OBJID += 1
 		obj = { 'version' : '1.1',
@@ -97,9 +97,10 @@ def wordreverse(in_buf):
 	return ''.join(out_words)
 
 class Miner:
-	def __init__(self, id):
+	def __init__(self, id, settings = {}):
 		self.id = id
 		self.max_nonce = MAX_NONCE
+		self.settings = settings
 
 	def work(self, datastr, targetstr):
 		# decode work data hex string to binary
@@ -181,11 +182,11 @@ class Miner:
 		time_diff = time_end - time_start
 
 		self.max_nonce = long(
-			(hashes_done * settings['scantime']) / time_diff)
+			(hashes_done * self.settings['scantime']) / time_diff)
 		if self.max_nonce > 0xfffffffaL:
 			self.max_nonce = 0xfffffffaL
 
-		if settings['hashmeter']:
+		if self.settings['hashmeter']:
 			print "HashMeter(%d): %d hashes, %.2f Khash/sec" % (
 			      self.id, hashes_done,
 			      (hashes_done / 1000.0) / time_diff)
@@ -194,22 +195,30 @@ class Miner:
 			self.submit_work(rpc, work['data'], nonce_bin)
 
 	def loop(self):
-		rpc = BitcoinRPC(settings['host'], settings['port'],
-				 settings['rpcuser'], settings['rpcpass'])
+		rpc = BitcoinRPC(self.settings['host'], self.settings['port'],
+				 self.settings['rpcuser'], self.settings['rpcpass'])
 		if rpc is None:
 			return
 
 		while True:
 			self.iterate(rpc)
 
-def miner_thread(id):
-	miner = Miner(id)
+def miner_thread(id,settings={}):
+	miner = Miner(id,settings)
 	miner.loop()
 
 if __name__ == '__main__':
 	if len(sys.argv) != 2:
 		print "Usage: poold.py CONFIG-FILE"
 		sys.exit(1)
+
+	# Import Psyco if available
+        try:
+                import psyco
+                psyco.profile(0.05)
+                psyco.full()
+        except ImportError:
+                pass
 
 	f = open(sys.argv[1])
 	for line in f:
@@ -248,7 +257,7 @@ if __name__ == '__main__':
 
 	thr_list = []
 	for thr_id in range(settings['threads']):
-		p = Process(target=miner_thread, args=(thr_id,))
+		p = Process(target=miner_thread, args=(thr_id,settings,))
 		p.start()
 		thr_list.append(p)
 		time.sleep(1)			# stagger threads
