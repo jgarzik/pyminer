@@ -30,7 +30,6 @@ from multiprocessing import Process
 ERR_SLEEP = 15
 MAX_NONCE = 1000000L
 
-settings = {}
 pp = pprint.PrettyPrinter(indent=4)
 
 class BitcoinRPC:
@@ -97,10 +96,10 @@ def wordreverse(in_buf):
 	return ''.join(out_words)
 
 class Miner:
-	def __init__(self, id, settings = {}):
-		self.id = id
-		self.max_nonce = MAX_NONCE
+	def __init__(self, id, settings):
+		self.id = id;
 		self.settings = settings
+		self.max_nonce = MAX_NONCE
 
 	def work(self, datastr, targetstr):
 		# decode work data hex string to binary
@@ -203,71 +202,50 @@ class Miner:
 		while True:
 			self.iterate(rpc)
 
-def miner_thread(id,settings={}):
-	miner = Miner(id,settings)
+def miner_thread(id, settings={}):
+	miner = Miner(id, settings)
 	miner.loop()
 
 if __name__ == '__main__':
 	if len(sys.argv) != 2:
-		print "Usage: poold.py CONFIG-FILE"
+                import os
+		print "Usage: %s <config>" % os.path.basename(sys.argv[0])
 		sys.exit(1)
 
-	# Import Psyco if available
-        try:
-                import psyco
-                psyco.profile(0.05)
-                psyco.full()
-        except ImportError:
-                pass
+        settings = { # defaults
+                'host': '127.0.0.1',
+                'port': 8332,
+                'logdir': '/var/lib/pool/log',
+                'threads': 1,
+                'hashmeter': False,
+                'scantime': 30L
+        }
 
-	f = open(sys.argv[1])
-	for line in f:
-		# skip comment lines
-		m = re.search('^\s*#', line)
-		if m:
-			continue
+	for line in open(sys.argv[1]):
+                line = line.strip()
+		if '=' in line and not line.startswith('#'):
+                        key, val = line.split('=',1)
+                        key, val = key.strip(), val.strip()
+                        if key in settings:
+                                val = type(settings[key])(val) # typecast
+                        settings[key] = val
 
-		# parse key=value lines
-		m = re.search('^(\w+)\s*=\s*(\S.*)$', line)
-		if m is None:
-			continue
-		settings[m.group(1)] = m.group(2)
-	f.close()
-
-	if 'host' not in settings:
-		settings['host'] = '127.0.0.1'
-	if 'port' not in settings:
-		settings['port'] = 8332
-	if 'logdir' not in settings:
-		settings['logdir'] = '/var/lib/pool/log'
-	if 'threads' not in settings:
-		settings['threads'] = 1
-	if 'hashmeter' not in settings:
-		settings['hashmeter'] = 0
-	if 'scantime' not in settings:
-		settings['scantime'] = 30L
-	if 'rpcuser' not in settings or 'rpcpass' not in settings:
+	if not ('rpcuser' in settings and 'rpcpass' in settings):
 		print "Missing username and/or password in cfg file"
 		sys.exit(1)
 
-	settings['port'] = int(settings['port'])
-	settings['threads'] = int(settings['threads'])
-	settings['hashmeter'] = int(settings['hashmeter'])
-	settings['scantime'] = long(settings['scantime'])
-
-	thr_list = []
-	for thr_id in range(settings['threads']):
-		p = Process(target=miner_thread, args=(thr_id,settings,))
-		p.start()
-		thr_list.append(p)
-		time.sleep(1)			# stagger threads
+	threads = list(Process(target=miner_thread, args=(i, settings,)) for i in range(settings['threads']))
+	
+	for thread in threads:
+                thread.start()
+                time.sleep(1) # stagger threads
 
 	print settings['threads'], "mining threads started"
 
 	print time.asctime(), "Miner Starts - %s:%s" % (settings['host'], settings['port'])
 	try:
-		for thr_proc in thr_list:
-			thr_proc.join()
+		for thread in threads:
+			thread.join()
 	except KeyboardInterrupt:
 		pass
 	print time.asctime(), "Miner Stops - %s:%s" % (settings['host'], settings['port'])
