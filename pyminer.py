@@ -208,7 +208,7 @@ def miner_thread(id):
 
 if __name__ == '__main__':
 	if len(sys.argv) != 2:
-		print "Usage: poold.py CONFIG-FILE"
+		print "Usage: pyminer.py CONFIG-FILE"
 		sys.exit(1)
 
 	f = open(sys.argv[1])
@@ -229,8 +229,6 @@ if __name__ == '__main__':
 		settings['host'] = '127.0.0.1'
 	if 'port' not in settings:
 		settings['port'] = 8332
-	if 'logdir' not in settings:
-		settings['logdir'] = '/var/lib/pool/log'
 	if 'threads' not in settings:
 		settings['threads'] = 1
 	if 'hashmeter' not in settings:
