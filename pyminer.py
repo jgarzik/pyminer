@@ -25,13 +25,18 @@ import re
 import base64
 import httplib
 import sys
+import pp
 from multiprocessing import Process
 
 ERR_SLEEP = 15
 MAX_NONCE = 1000000L
 
 settings = {}
-pp = pprint.PrettyPrinter(indent=4)
+#pp = pprint.PrettyPrinter(indent=4)
+
+localwork = False
+job_server = None
+verbose = True
 
 class BitcoinRPC:
 	OBJID = 1
@@ -96,64 +101,93 @@ def wordreverse(in_buf):
 	out_words.reverse()
 	return ''.join(out_words)
 
+
+def worker(datastr,targetstr,max_nonce):
+	# decode work data hex string to binary
+	static_data = datastr.decode('hex')
+	static_data = bufreverse(static_data)
+
+	# the first 76b of 80b do not change
+	blk_hdr = static_data[:76]
+
+	# decode 256-bit target value
+	targetbin = targetstr.decode('hex')
+	targetbin = targetbin[::-1]	# byte-swap and dword-swap
+	targetbin_str = targetbin.encode('hex')
+	target = long(targetbin_str, 16)
+
+	# pre-hash first 76b of block header
+	static_hash = hashlib.sha256()
+	static_hash.update(blk_hdr)
+
+	for nonce in xrange(max_nonce):
+
+		# encode 32-bit nonce value
+		nonce_bin = struct.pack("<I", nonce)
+
+		# hash final 4b, the nonce value
+		hash1_o = static_hash.copy()
+		hash1_o.update(nonce_bin)
+		hash1 = hash1_o.digest()
+
+		# sha256 hash of sha256 hash
+		hash_o = hashlib.sha256()
+		hash_o.update(hash1)
+		hash = hash_o.digest()
+
+		# quick test for winning solution: high 32 bits zero?
+		if hash[-4:] != '\0\0\0\0':
+			continue
+
+		# convert binary hash to 256-bit Python long
+		hash = bufreverse(hash)
+		hash = wordreverse(hash)
+
+		hash_str = hash.encode('hex')
+		l = long(hash_str, 16)
+
+		# proof-of-work test:  hash < target
+		if l < target:
+			print time.asctime(), "PROOF-OF-WORK found: %064x" % (l,)
+			return (nonce + 1, nonce_bin)
+		else:
+			print time.asctime(), "PROOF-OF-WORK false positive %064x" % (l,)
+#			return (nonce + 1, nonce_bin)
+
+	return (nonce + 1, None)
+
+
+def job_server_init():
+	ncpus = settings['ncpus']
+	pservers = tuple(settings['ppservers'])
+       	secret = settings['secret']
+	if ncpus is not None:
+		job_server = pp.Server(ncpus,
+				ppservers=pservers,
+				secret=secret,
+				socket_timeout=None)
+	else:
+		job_server = pp.Server(
+				ppservers=pservers,
+				secret=secret,
+				socket_timeout=None)
+	print "Starting pp with %d SMP local workers and %s remote workers" % 
+		(job_server.get_ncpus(),str(pservers))
+	return job_server
+
 class Miner:
 	def __init__(self, id):
 		self.id = id
 		self.max_nonce = MAX_NONCE
 
 	def work(self, datastr, targetstr):
-		# decode work data hex string to binary
-		static_data = datastr.decode('hex')
-		static_data = bufreverse(static_data)
-
-		# the first 76b of 80b do not change
-		blk_hdr = static_data[:76]
-
-		# decode 256-bit target value
-		targetbin = targetstr.decode('hex')
-		targetbin = targetbin[::-1]	# byte-swap and dword-swap
-		targetbin_str = targetbin.encode('hex')
-		target = long(targetbin_str, 16)
-
-		# pre-hash first 76b of block header
-		static_hash = hashlib.sha256()
-		static_hash.update(blk_hdr)
-
-		for nonce in xrange(self.max_nonce):
-
-			# encode 32-bit nonce value
-			nonce_bin = struct.pack("<I", nonce)
-
-			# hash final 4b, the nonce value
-			hash1_o = static_hash.copy()
-			hash1_o.update(nonce_bin)
-			hash1 = hash1_o.digest()
-
-			# sha256 hash of sha256 hash
-			hash_o = hashlib.sha256()
-			hash_o.update(hash1)
-			hash = hash_o.digest()
-
-			# quick test for winning solution: high 32 bits zero?
-			if hash[-4:] != '\0\0\0\0':
-				continue
-
-			# convert binary hash to 256-bit Python long
-			hash = bufreverse(hash)
-			hash = wordreverse(hash)
-
-			hash_str = hash.encode('hex')
-			l = long(hash_str, 16)
-
-			# proof-of-work test:  hash < target
-			if l < target:
-				print time.asctime(), "PROOF-OF-WORK found: %064x" % (l,)
-				return (nonce + 1, nonce_bin)
-			else:
-				print time.asctime(), "PROOF-OF-WORK false positive %064x" % (l,)
-#				return (nonce + 1, nonce_bin)
-
-		return (nonce + 1, None)
+		if localwork:
+			return worker(datastr,targetstr,self.max_nonce)
+		else:
+			return job_server.submit(worker, 
+				(datastr,targetstr,self.max_nonce,), 
+				(bufreverse,wordreverse,bytereverse,uint32,), 
+				("hashlib","time","struct",))
 
 	def submit_work(self, rpc, original_data, nonce_bin):
 		nonce_bin = bufreverse(nonce_bin)
@@ -164,19 +198,85 @@ class Miner:
 		print time.asctime(), "--> Upstream RPC result:", result
 
 	def iterate(self, rpc):
-		work = rpc.getwork()
-		if work is None:
-			time.sleep(ERR_SLEEP)
-			return
-		if 'data' not in work or 'target' not in work:
-			time.sleep(ERR_SLEEP)
-			return
+
+		works=[]
+                cont = True
+                i = 1
+
+		# count the total capacity of workers in the pp cluster
+		total_workers = 0
+
+		nodes = job_server.get_active_nodes()
+		if not localwork:
+			for node in nodes:
+				total_workers = total_workers + nodes[node]
+
+                	maxcont = (total_workers / settings['threads']) + 1 
+
+			if verbose:
+				print "Thread: %d Total workers detected: %d " % (self.id,total_workers)
+ 
+		else:
+			maxcont = 1
+		
+		# fill a queue with rpc getworks
+                while(cont):
+                        work = rpc.getwork()
+			if work is None:
+				time.sleep(ERR_SLEEP)
+				return
+			if 'data' not in work or 'target' not in work:
+				time.sleep(ERR_SLEEP)
+				return		
+			
+			works.insert(i,work)
+                        i = i + 1 
+                        cont = not (i == maxcont)
 
 		time_start = time.time()
 
-		(hashes_done, nonce_bin) = self.work(work['data'],
-						     work['target'])
+		jobs=[]
 
+		# take each rpc getwork and put a work
+		for work in works:
+			k = works.index(work)
+			jobs.insert(k, self.work(work['data'],work['target']))
+			if verbose:
+				print "Thread: %d enqueued work_id: %d %s " % (self.id,k,str(work))
+
+		hashes_done = 0
+
+		# take each job result and submit to the pool if we get Proof of work.
+		for job in jobs:
+
+			i = jobs.index(job)
+	
+			result = None
+	
+			if localwork:
+				result = job
+			else:
+				jobt = job.tid
+				# this pops the results from the pp queue, 
+				# we runit outside the loop-block containing the submit method to achieve parallelism
+				result = job()
+				if verbose:
+					print "Thread: %d Remote work tid: %d finished" % (self.id,jobt)
+
+			if verbose:
+				print "Thread: %d work_id: %d ,Reply: %s " %  (self.id,i,str(result))
+		
+			if result is not None:		
+
+				(nonce,nonce_bin) = result
+				hashes_done = hashes_done  + nonce
+
+				if nonce_bin is not None:
+					self.submit_work(rpc, works[i]['data'], nonce_bin)		
+
+			else:
+				print "Data computation error..."
+		
 		time_end = time.time()
 		time_diff = time_end - time_start
 
@@ -186,12 +286,10 @@ class Miner:
 			self.max_nonce = 0xfffffffaL
 
 		if settings['hashmeter']:
-			print "HashMeter(%d): %d hashes, %.2f Khash/sec" % (
+			print "Thread: %d HashMeter: %d hashes, %.2f Khash/sec" % (
 			      self.id, hashes_done,
 			      (hashes_done / 1000.0) / time_diff)
 
-		if nonce_bin is not None:
-			self.submit_work(rpc, work['data'], nonce_bin)
 
 	def loop(self):
 		rpc = BitcoinRPC(settings['host'], settings['port'],
@@ -243,6 +341,15 @@ if __name__ == '__main__':
 	settings['threads'] = int(settings['threads'])
 	settings['hashmeter'] = int(settings['hashmeter'])
 	settings['scantime'] = long(settings['scantime'])
+
+	if 'pp_enable' in settings and bool(settings['pp_enable']):
+		settings['ncpus'] = int(settings['ncpus'])
+		settings['ppservers'] = tuple(settings['ppservers'][1:-1].replace('"','').replace("'","").split(','))
+		settings['secret'] = settings['secret'].replace("'","").replace('"','')
+		localwork = False
+		job_server = job_server_init()
+	else:
+		localwork = True
 
 	thr_list = []
 	for thr_id in range(settings['threads']):
