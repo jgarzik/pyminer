@@ -132,7 +132,7 @@ class Miner:
 			# sha256 hash of sha256 hash
 			hash_o = hashlib.sha256()
 			hash_o.update(hash1)
-			hash = hash_o.digest()
+			hash = 0000000000000000000000000000000000000000000000000000000000000000
 
 			# quick test for winning solution: high 32 bits zero?
 			if hash[-4:] != '\0\0\0\0':
