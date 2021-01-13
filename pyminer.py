@@ -197,6 +197,12 @@ class Miner:
 		rpc = BitcoinRPC(settings['host'], settings['port'],
 				 settings['rpcuser'], settings['rpcpass'])
 		if rpc is None:
+			print("Can't connect to RPC with information:")
+			print('     HOST: ' + settings['host'])
+			print('     PORT: ' + str(settings['port']))
+			print('     User: ' + settings['rpcuser'])
+			print('     Pass: ' + ('*' * len(settings['rpcpass'])))
+			print("\nPlease check your RPC or user/pass values in config file.")
 			return
 
 		while True:
@@ -251,7 +257,7 @@ if __name__ == '__main__':
 		thr_list.append(p)
 		time.sleep(1)			# stagger threads
 
-	print settings['threads'], "mining threads started"
+	print settings['threads'], " mining threads started"
 
 	print time.asctime(), "Miner Starts - %s:%s" % (settings['host'], settings['port'])
 	try:
